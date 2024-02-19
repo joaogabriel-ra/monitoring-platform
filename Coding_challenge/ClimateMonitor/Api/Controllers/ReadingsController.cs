@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using ClimateMonitor.Services;
 using ClimateMonitor.Services.Models;
+using System.Text.RegularExpressions;
 
 namespace ClimateMonitor.Api.Controllers;
 
@@ -12,7 +13,7 @@ public class ReadingsController : ControllerBase
     private readonly AlertService _alertService;
 
     public ReadingsController(
-        DeviceSecretValidatorService secretValidator, 
+        DeviceSecretValidatorService secretValidator,
         AlertService alertService)
     {
         _secretValidator = secretValidator;
@@ -34,14 +35,25 @@ public class ReadingsController : ControllerBase
     /// <param name="deviceReadingRequest">Sensor information and extra metadata from device.</param>
     [HttpPost("evaluate")]
     public ActionResult<IEnumerable<Alert>> EvaluateReading(
-        string deviceSecret,
         [FromBody] DeviceReadingRequest deviceReadingRequest)
     {
-        if (!_secretValidator.ValidateDeviceSecret(deviceSecret))
+        var re = Request;
+        var headers = re.Headers;
+
+        if (Request.Headers.TryGetValue("x-device-shared-secret", out var values))
         {
-            return Problem(
-                detail: "Device secret is not within the valid range.",
-                statusCode: StatusCodes.Status401Unauthorized);
+            if (!_secretValidator.ValidateDeviceSecret(values))
+            {
+                return Problem(
+                    detail: "Device secret is not within the valid range.",
+                    statusCode: StatusCodes.Status401Unauthorized);
+            }
+        }
+
+        if (!Regex.IsMatch(deviceReadingRequest.FirmwareVersion, @"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9azA-Z-]+)*))?$"))
+        {
+            ModelState.AddModelError("FirmwareVersion", "The firmware value does not match semantic versioning format.");
+            return ValidationProblem(ModelState);
         }
 
         return Ok(_alertService.GetAlerts(deviceReadingRequest));
